@@ -1,0 +1,93 @@
+# ============================================
+# 智能台灯配置文件 (默认配置模板)
+# 请复制此文件为 config.yaml 并修改
+# ============================================
+
+system:
+  name: "智能台灯"
+  version: "1.0.0"
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+
+# USB设备配置
+devices:
+  camera:
+    device_id: 0           # 摄像头设备ID，通常为0
+    width: 640
+    height: 480
+    fps: 15                # 帧率，树莓派建议15fps
+
+  microphone:
+    device_index: null     # null表示使用默认麦克风
+    sample_rate: 16000     # 采样率 16000 或 48000
+    chunk_size: 1024
+
+  servo:
+    port: "/dev/ttyUSB0"   # USB转TTL串口
+    baudrate: 1000000      # 飞特舵机波特率
+    ids: [1, 2, 3]         # 舵机ID列表
+
+# STM32通信配置 (只传亮度值 0~1)
+stm32:
+  port: "/dev/ttyAMA0"     # 树莓派GPIO串口
+  baudrate: 115200
+  timeout: 1
+
+# 模块开关
+modules:
+  vision:
+    enabled: true
+    face_detection: true
+    emotion_detection: true
+    gesture_detection: true
+    process_interval: 0.1  # 处理间隔(秒)
+
+  voice:
+    enabled: true
+    api: "xunfei"
+    app_id: "your_app_id"
+    api_key: "your_api_key"
+    api_secret: "your_api_secret"
+
+# 默认值
+defaults:
+  brightness: 0.5          # 默认亮度 0~1
+  idle_timeout: 30         # 空闲超时(秒)
+
+# 情绪-动作映射
+emotion_mapping:
+  Happy:
+    action: "cute"
+    brightness: 0.8
+  Sad:
+    action: "nod_slow"
+    brightness: 0.4
+  Angry:
+    action: "shake"
+    brightness: 0.3
+  Surprise:
+    action: "nod"
+    brightness: 0.9
+  Neutral:
+    action: null
+    brightness: null
+
+# 语音命令映射
+voice_commands:
+  开灯:
+    brightness: 0.8
+  关灯:
+    brightness: 0.0
+  亮一点:
+    brightness_delta: 0.2
+  暗一点:
+    brightness_delta: -0.2
+  最亮:
+    brightness: 1.0
+  蹦迪:
+    action: "dance"
+  点头:
+    action: "nod"
+  摇头:
+    action: "shake"
+  卖萌:
+    action: "cute"
