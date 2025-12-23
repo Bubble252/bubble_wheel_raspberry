@@ -28,6 +28,54 @@ def compute_hand_openness(joint_pos, eps=1e-6):
     return openness, distances
 
 
+def detect_pointing_one(joint_pos, eps=1e-6):
+    """
+    检测"比1"手势（食指伸直，其他手指弯曲）
+    
+    MediaPipe 关键点:
+    - 4: 拇指尖, 8: 食指尖, 12: 中指尖, 16: 无名指尖, 20: 小指尖
+    - 0: 手腕, 5: 食指根, 9: 中指根, 13: 无名指根, 17: 小指根
+    
+    Returns:
+        bool: 是否为"比1"手势
+    """
+    if joint_pos is None:
+        return False
+    
+    # 计算手掌宽度作为参考
+    palm_width = np.linalg.norm(joint_pos[5] - joint_pos[17])
+    if palm_width < eps:
+        return False
+    
+    # 计算各手指指尖到手腕的距离（归一化）
+    wrist = joint_pos[0]
+    
+    # 食指伸直：指尖到手腕距离 > 指根到手腕距离 * 1.3
+    index_tip_dist = np.linalg.norm(joint_pos[8] - wrist)
+    index_mcp_dist = np.linalg.norm(joint_pos[5] - wrist)
+    index_extended = index_tip_dist > index_mcp_dist * 1.3
+    
+    # 其他手指弯曲：指尖到手腕距离 < 指根到手腕距离 * 1.2
+    # 中指
+    middle_tip_dist = np.linalg.norm(joint_pos[12] - wrist)
+    middle_mcp_dist = np.linalg.norm(joint_pos[9] - wrist)
+    middle_bent = middle_tip_dist < middle_mcp_dist * 1.2
+    
+    # 无名指
+    ring_tip_dist = np.linalg.norm(joint_pos[16] - wrist)
+    ring_mcp_dist = np.linalg.norm(joint_pos[13] - wrist)
+    ring_bent = ring_tip_dist < ring_mcp_dist * 1.2
+    
+    # 小指
+    pinky_tip_dist = np.linalg.norm(joint_pos[20] - wrist)
+    pinky_mcp_dist = np.linalg.norm(joint_pos[17] - wrist)
+    pinky_bent = pinky_tip_dist < pinky_mcp_dist * 1.2
+    
+    # 拇指（可以伸直或弯曲，不强制要求）
+    
+    return index_extended and middle_bent and ring_bent and pinky_bent
+
+
 class EmbeddedSingleHandDetector:
     """内嵌的单手检测器（基于 MediaPipe）"""
     
@@ -208,8 +256,19 @@ class HandFollowMode(BaseMode):
         self._pause_threshold = 0.7   # openness < 此值时暂停
         self._resume_threshold = 0.9  # openness > 此值时恢复
         
+        # 比1手势退出功能
+        self._pointing_one_start_time = None  # 比1手势开始时间
+        self._pointing_one_exit_seconds = 3.0  # 比1手势持续多少秒后退出
+        
     def on_enter(self):
         """进入模式：初始化检测器"""
+        self._print("[DEBUG] on_enter() 开始")
+        self._print(f"[DEBUG] controller = {self.controller}")
+        if self.controller:
+            servo_thread = getattr(self.controller, '_servo_thread', None)
+            self._print(f"[DEBUG] _servo_thread = {servo_thread}")
+            if servo_thread:
+                self._print(f"[DEBUG] servo_thread.is_alive() = {servo_thread.is_alive()}")
         self._init_hand_detector()
         self._init_kalman_filter()
         self._move_to_home()
@@ -295,15 +354,43 @@ class HandFollowMode(BaseMode):
                        f"Euler: [{euler[0]:.1f}, {euler[1]:.1f}, {euler[2]:.1f}] | "
                        f"Open: {openness:.2f}")
             
-            # === 握拳暂停功能 ===
-            if not self._paused and openness < self._pause_threshold:
-                # 进入暂停状态
-                self._paused = True
-                self._print(f"✋ 握拳暂停 (openness={openness:.2f})")
-            elif self._paused and openness > self._resume_threshold:
-                # 恢复跟随
-                self._paused = False
-                self._print(f"👋 恢复跟随 (openness={openness:.2f})")
+            # === 获取关节位置用于手势检测 ===
+            joint_pos = hand_data.get('joint_pos')
+            
+            # === 比1手势检测（退出功能） ===
+            import time
+            is_pointing_one = detect_pointing_one(joint_pos) if joint_pos is not None else False
+            
+            if is_pointing_one:
+                if self._pointing_one_start_time is None:
+                    # 开始计时
+                    self._pointing_one_start_time = time.time()
+                    self._paused = True  # 比1也会暂停
+                    self._print("☝️ 检测到比1手势，暂停中...")
+                else:
+                    # 检查是否超过退出时间
+                    elapsed = time.time() - self._pointing_one_start_time
+                    remaining = self._pointing_one_exit_seconds - elapsed
+                    if remaining > 0:
+                        self._debug(f"[比1手势] 保持 {elapsed:.1f}s，还需 {remaining:.1f}s 退出")
+                    else:
+                        self._print(f"☝️ 比1手势保持 {self._pointing_one_exit_seconds}s，退出模式")
+                        return False  # 返回 False 退出模式
+            else:
+                # 不是比1手势，重置计时
+                if self._pointing_one_start_time is not None:
+                    self._pointing_one_start_time = None
+                    self._print("☝️ 比1手势取消")
+                
+                # === 握拳暂停功能 ===
+                if not self._paused and openness < self._pause_threshold:
+                    # 进入暂停状态
+                    self._paused = True
+                    self._print(f"✋ 握拳暂停 (openness={openness:.2f})")
+                elif self._paused and openness > self._resume_threshold:
+                    # 恢复跟随
+                    self._paused = False
+                    self._print(f"👋 恢复跟随 (openness={openness:.2f})")
             
             # 暂停时不移动舵机
             if self._paused:
@@ -422,6 +509,7 @@ class HandFollowMode(BaseMode):
             'openness': float(openness_filtered),
             'middle_mcp_y': float(middle_mcp_y),
             'ik_input': ik_input,
+            'joint_pos': joint_pos,  # 添加关节位置用于手势检测
             'raw': {
                 'tvec': t_raw.tolist(),
                 'euler_rad': euler_rad.tolist(),
@@ -628,16 +716,21 @@ class HandFollowMode(BaseMode):
         
         if self.controller:
             servo_thread = getattr(self.controller, '_servo_thread', None)
+            self._print(f"[DEBUG] _move_servos: controller={self.controller is not None}, servo_thread={servo_thread is not None}")
             if servo_thread:
+                self._print(f"[DEBUG] 准备发送舵机命令: {positions}")
                 for servo_id, pos in positions.items():
                     # 限幅
                     min_pos, max_pos = self.servo_limits.get(servo_id, (0, 1023))
                     pos = max(min_pos, min(max_pos, pos))
-                    servo_thread.set_position(servo_id, pos, speed)
+                    servo_thread.move(servo_id, pos, speed if speed else 500)
                     self.current_positions[servo_id] = pos
             else:
                 # 模拟模式
+                self._print(f"[DEBUG] servo_thread 为 None! 使用模拟模式")
                 self._debug(f"[MockServo] 移动: {positions}")
+        else:
+            self._print(f"[DEBUG] controller 为 None!")
                 
     def handle_voice(self, text: str) -> bool:
         """处理语音命令"""
@@ -744,9 +837,9 @@ class RealServoController:
             self.write_position(servo_id, pos, speed)
 
 
-class ServoThread:
+class _TestServoThread:
     """
-    舵机发送线程（独立线程，避免阻塞主线程）
+    独立测试用的舵机发送线程（避免与 modules/servo/servo_thread.py 混淆）
     
     主线程调用 set_position() 只是把指令塞进队列，立即返回。
     独立线程循环从队列取指令，调用 writeTxRx 发送。
@@ -822,7 +915,7 @@ def test_hand_follow_mode():
     
     # 尝试连接舵机
     if servo_controller.connect():
-        controller._servo_thread = ServoThread(servo_controller)
+        controller._servo_thread = _TestServoThread(servo_controller)
         print("✓ 使用真实舵机控制")
     else:
         print("⚠ 舵机连接失败，使用模拟模式")

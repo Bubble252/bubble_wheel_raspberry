@@ -193,11 +193,17 @@ class MainController:
         if not self.simulate_servo and module_config.get('servo', {}).get('enabled', True):
             try:
                 from ..modules.servo import ServoThread
-                self._servo_thread = ServoThread(self.config.get('servo', {}))
+                servo_config = self.config.get('servo', {})
+                self._print(f"[DEBUG] 舵机配置: {servo_config}")
+                self._servo_thread = ServoThread(servo_config)
                 self._servo_thread.start()
+                self._print(f"[DEBUG] 舵机线程已启动: {self._servo_thread}")
+                self._print(f"[DEBUG] 舵机线程 is_alive: {self._servo_thread.is_alive()}")
                 self._print("舵机模块初始化成功", "SUCCESS")
             except Exception as e:
                 self._print(f"舵机模块初始化失败: {e}", "ERROR")
+                import traceback
+                traceback.print_exc()
         elif self.simulate_servo:
             # 创建模拟舵机
             self._servo_thread = MockServoThread()
@@ -353,6 +359,8 @@ class MainController:
         Args:
             target_state: 目标状态
         """
+        self._print(f"[DEBUG] _switch_to_mode: target={target_state}")
+        
         # 退出当前模式
         if self._current_mode:
             self._current_mode.exit()
@@ -361,7 +369,17 @@ class MainController:
         # 创建新模式
         mode_class = self.MODE_CLASSES.get(target_state)
         if mode_class:
+            self._print(f"[DEBUG] 创建模式实例: {mode_class}")
             self._current_mode = mode_class(self)
+            
+            # 初始化舵机（延迟初始化，进入模式时才通信）
+            self._print(f"[DEBUG] _servo_thread = {self._servo_thread}")
+            if self._servo_thread:
+                self._print(f"[DEBUG] 调用 servo_thread.init()")
+                self._servo_thread.init()
+            else:
+                self._print(f"[DEBUG] 警告: _servo_thread 为 None!")
+            
             self._current_mode.enter()
             self.state_machine.transition_to(target_state)
         else:
@@ -373,6 +391,10 @@ class MainController:
         if self._current_mode:
             self._current_mode.exit()
             self._current_mode = None
+        
+        # 暂停舵机通信（让出 USB 带宽给语音识别）
+        if self._servo_thread:
+            self._servo_thread.suspend()
         
         self.state_machine.transition_to(LampState.STANDBY)
         self._print("-" * 50)

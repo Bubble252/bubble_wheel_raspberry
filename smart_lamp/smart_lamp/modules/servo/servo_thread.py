@@ -29,20 +29,28 @@ class ServoThread(threading.Thread):
         Args:
             config: 舵机配置字典
         """
+        print("[ServoThread] __init__ 开始")
         super().__init__(daemon=True, name="ServoThread")
+        print("[ServoThread] super().__init__ 完成")
         
         self.config = config
         self._running = False
         
-        # 初始化舵机驱动
-        self.driver = ServoDriver(config)
+        # 初始化舵机驱动（从config提取port和baudrate）
+        port = config.get('port', '/dev/ttyUSB0')
+        baudrate = config.get('baudrate', 1000000)
+        print(f"[ServoThread] 创建 ServoDriver: port={port}, baudrate={baudrate}")
+        self.driver = ServoDriver(port, baudrate)
+        print("[ServoThread] ServoDriver 创建完成")
         
         # 舵机ID列表
         self.servo_ids = config.get('servo_ids', [1, 2, 3])
         
         # 动作播放器
         actions_file = config.get('actions_file', 'config/actions.yaml')
+        print(f"[ServoThread] 创建 ActionPlayer: {actions_file}")
         self.action_player = ActionPlayer(self.driver, actions_file)
+        print("[ServoThread] ActionPlayer 创建完成")
         
         # 命令队列
         self._command_queue: Queue = Queue()
@@ -52,39 +60,23 @@ class ServoThread(threading.Thread):
         
         # 位置锁定标志
         self._position_locked = False
+        
+        # 延迟初始化标志（注意：不能用 _initialized，会和 threading.Thread 冲突！）
+        self._servo_initialized = False
+        self._suspended = False  # 暂停通信（用于退出模式时）
+        print("[ServoThread] __init__ 完成")
     
     def run(self):
         """线程主循环"""
         self._print("舵机线程启动")
         self._running = True
         
-        # 连接舵机
+        # 连接舵机（只打开串口，不通信）
         if not self.driver.connect():
             self._print("舵机连接失败")
             return
         
-        # ========== 调试：只 connect，不通信 ==========
-        self._print("【调试模式】只打开串口，不进行任何通信")
-        while self._running:
-            import time
-            time.sleep(1)
-        self.driver.disconnect()
-        self._print("舵机线程退出")
-        return
-        # ========== 调试结束 ==========
-        
-        # 扫描在线舵机
-        online = []
-        for sid in self.servo_ids:
-            pos = self.driver.read_position(sid)
-            if pos is not None:
-                online.append(sid)
-                self._current_positions[sid] = pos
-        
-        self._print(f"在线舵机: {online}")
-        
-        # 回到初始位置
-        self._home()
+        self._print("舵机已连接，等待初始化命令...")
         
         # 主循环
         while self._running:
@@ -106,6 +98,36 @@ class ServoThread(threading.Thread):
     def _handle_command(self, cmd: Dict):
         """处理命令"""
         cmd_type = cmd.get('type')
+        self._print(f"[DEBUG] 收到命令: {cmd_type}, suspended={self._suspended}, initialized={self._servo_initialized}")
+        
+        # === 初始化命令（延迟初始化） ===
+        if cmd_type == 'init':
+            self._print(f"[DEBUG] init 命令: 当前 suspended={self._suspended}")
+            if not self._servo_initialized:
+                self._do_init()
+            self._suspended = False  # 强制恢复通信
+            self._print(f"[DEBUG] init 命令完成: suspended={self._suspended}")
+            return
+        
+        # === 暂停/恢复通信 ===
+        if cmd_type == 'suspend':
+            self._suspended = True
+            self._print("舵机通信已暂停")
+            return
+        
+        if cmd_type == 'resume':
+            self._suspended = False
+            self._print("舵机通信已恢复")
+            return
+        
+        # 暂停状态下忽略其他命令
+        if self._suspended:
+            self._print(f"[DEBUG] 命令 {cmd_type} 被忽略: suspended=True")
+            return
+        
+        # 未初始化时忽略需要预设动作的命令（move/sync_move 不受限制，因为 connect 已完成）
+        if not self._servo_initialized and cmd_type in ['play_action', 'home']:
+            return
         
         if cmd_type == 'play_action':
             if not self._position_locked:
@@ -123,8 +145,11 @@ class ServoThread(threading.Thread):
                 position = cmd.get('position')
                 speed = cmd.get('speed', 500)
                 if servo_id is not None and position is not None:
-                    self.driver.move_servo(servo_id, position, speed)
+                    self._print(f"[DEBUG] 执行 move: ID={servo_id}, pos={position}, speed={speed}")
+                    self.driver.move(servo_id, position, speed)
                     self._current_positions[servo_id] = position
+            else:
+                self._print(f"[DEBUG] move 被跳过: position_locked={self._position_locked}")
                 
         elif cmd_type == 'sync_move':
             if not self._position_locked:
@@ -150,7 +175,42 @@ class ServoThread(threading.Thread):
         self.driver.sync_move(home_pos, speed=200)
         self._current_positions = home_pos.copy()
     
+    def _do_init(self):
+        """执行真正的初始化（扫描舵机、归位）"""
+        self._print("开始初始化舵机...")
+        
+        # 扫描在线舵机
+        online = []
+        for sid in self.servo_ids:
+            pos = self.driver.read_position(sid)
+            if pos is not None:
+                online.append(sid)
+                self._current_positions[sid] = pos
+        
+        self._print(f"在线舵机: {online}")
+        
+        # 回到初始位置
+        self._home()
+        
+        self._servo_initialized = True
+        self._print("舵机初始化完成")
+    
     # ==================== 外部接口 ====================
+    
+    def init(self):
+        """初始化舵机（延迟初始化，进入模式时调用）"""
+        # 立即恢复通信（不等队列处理）
+        self._suspended = False
+        self._print(f"[DEBUG] init() 调用: 立即设置 suspended=False")
+        self._command_queue.put({'type': 'init'})
+    
+    def suspend(self):
+        """暂停舵机通信（退出模式时调用，让出 USB 带宽给语音）"""
+        self._command_queue.put({'type': 'suspend'})
+    
+    def resume(self):
+        """恢复舵机通信"""
+        self._command_queue.put({'type': 'resume'})
     
     def play_action(self, action_name: str):
         """播放动作"""
@@ -165,6 +225,7 @@ class ServoThread(threading.Thread):
     
     def move(self, servo_id: int, position: int, speed: int = 500):
         """移动单个舵机"""
+        self._print(f"[DEBUG] move() 被调用: ID={servo_id}, pos={position}")
         self._command_queue.put({
             'type': 'move',
             'id': servo_id,
@@ -199,8 +260,12 @@ class ServoThread(threading.Thread):
     def stop(self):
         """停止线程"""
         self._running = False
-        if self.is_alive():
-            self.join(timeout=3)
+        try:
+            if self.is_alive():
+                self.join(timeout=3)
+        except (AssertionError, RuntimeError):
+            # 线程可能尚未启动
+            pass
     
     @property
     def is_playing(self) -> bool:

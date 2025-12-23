@@ -1,0 +1,22 @@
+[Unit]
+Description=Smart Lamp Control System
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/smart_lamp
+Environment="PATH=/home/pi/smart_lamp/.venv/bin"
+ExecStart=/home/pi/smart_lamp/.venv/bin/python run.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# 资源限制
+MemoryMax=512M
+CPUQuota=80%
+
+[Install]
+WantedBy=multi-user.target

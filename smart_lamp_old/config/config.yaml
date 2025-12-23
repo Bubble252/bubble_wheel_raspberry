@@ -1,0 +1,112 @@
+# ============================================
+# 智能台灯配置文件 (已配置API密钥)
+# ============================================
+
+system:
+  name: "智能台灯"
+  version: "1.0.0"
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+
+# USB设备配置
+devices:
+  camera:
+    device_id: 0           # 摄像头设备ID，通常为0
+    width: 640
+    height: 480
+    fps: 15                # 帧率，树莓派建议15fps
+
+  microphone:
+    device_index: null     # null表示使用默认麦克风
+    sample_rate: 48000     # 采样率，与voice_recognition_simple.py一致
+    chunk_size: 1024
+
+  servo:
+    port: "/dev/ttyUSB0"   # USB转TTL串口
+    baudrate: 1000000      # 飞特舵机波特率
+    ids: [1, 2, 3]         # 舵机ID列表
+
+# STM32通信配置 (只传亮度值 0~1)
+stm32:
+  port: "/dev/ttyAMA0"     # 树莓派GPIO串口
+  baudrate: 115200
+  timeout: 1
+
+# 模块开关
+modules:
+  vision:
+    enabled: true
+    face_detection: true
+    emotion_detection: true
+    gesture_detection: true
+    process_interval: 0.1  # 处理间隔(秒)
+
+  voice:
+    enabled: true
+    api: "xunfei"
+    # 讯飞语音识别API配置（已填入）
+    app_id: "cac00df6"
+    api_key: "b44a5920313b3b3302e918ba97e17450"
+    api_secret: "NjJmMjdjMzMyNDFhYjY3YWM2NWI3NzZh"
+
+# 默认值
+defaults:
+  brightness: 0.5          # 默认亮度 0~1
+  idle_timeout: 30         # 空闲超时(秒)
+
+# 唤醒词配置
+wake_word: "宝莉"
+
+# 模式退出关键词
+exit_keywords:
+  - "退出"
+  - "返回"
+  - "停止"
+  - "结束"
+
+# 情绪-动作映射
+emotion_mapping:
+  Happy:
+    action: "cute"
+    brightness: 0.8
+  Sad:
+    action: "nod_slow"
+    brightness: 0.4
+  Angry:
+    action: "shake"
+    brightness: 0.3
+  Surprise:
+    action: "nod"
+    brightness: 0.9
+  Neutral:
+    action: null
+    brightness: null
+
+# 语音命令映射
+voice_commands:
+  开灯:
+    brightness: 0.8
+  关灯:
+    brightness: 0.0
+  亮一点:
+    brightness_delta: 0.2
+  暗一点:
+    brightness_delta: -0.2
+  最亮:
+    brightness: 1.0
+  最暗:
+    brightness: 0.1
+
+# 模式语音命令
+mode_commands:
+  hand_follow:
+    - "手势跟随"
+    - "跟随模式"
+    - "跟着我"
+  pet_mode:
+    - "宠物模式"
+    - "互动模式"
+    - "陪我玩"
+  brightness:
+    - "亮度模式"
+    - "亮度调节"
+    - "调节亮度"

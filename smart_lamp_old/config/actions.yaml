@@ -1,0 +1,146 @@
+# ============================================
+# 动作库配置
+# 定义舵机动作序列
+# ============================================
+# 舵机位置范围: 0-1000 (中位约500)
+# time: 关键帧时间(毫秒)
+# positions: {舵机ID: 位置}
+
+actions:
+  # 点头动作
+  nod:
+    name: "点头"
+    description: "台灯点头表示确认"
+    loop: false
+    duration: 800
+    keyframes:
+      - time: 0
+        positions: {1: 500, 2: 500, 3: 500}
+      - time: 300
+        positions: {1: 500, 2: 650, 3: 500}
+      - time: 500
+        positions: {1: 500, 2: 400, 3: 500}
+      - time: 800
+        positions: {1: 500, 2: 500, 3: 500}
+
+  # 慢速点头
+  nod_slow:
+    name: "慢速点头"
+    description: "缓慢点头表示理解"
+    loop: false
+    duration: 1200
+    keyframes:
+      - time: 0
+        positions: {1: 500, 2: 500, 3: 500}
+      - time: 600
+        positions: {1: 500, 2: 600, 3: 500}
+      - time: 1200
+        positions: {1: 500, 2: 500, 3: 500}
+
+  # 摇头动作
+  shake:
+    name: "摇头"
+    description: "台灯摇头表示否定"
+    loop: false
+    duration: 1000
+    keyframes:
+      - time: 0
+        positions: {1: 500, 2: 500, 3: 500}
+      - time: 250
+        positions: {1: 350, 2: 500, 3: 500}
+      - time: 500
+        positions: {1: 500, 2: 500, 3: 500}
+      - time: 750
+        positions: {1: 650, 2: 500, 3: 500}
+      - time: 1000
+        positions: {1: 500, 2: 500, 3: 500}
+
+  # 卖萌动作
+  cute:
+    name: "卖萌"
+    description: "可爱的小幅度摆动"
+    loop: false
+    duration: 800
+    keyframes:
+      - time: 0
+        positions: {1: 500, 2: 500, 3: 500}
+      - time: 200
+        positions: {1: 480, 2: 550, 3: 520}
+      - time: 400
+        positions: {1: 520, 2: 530, 3: 480}
+      - time: 600
+        positions: {1: 490, 2: 560, 3: 510}
+      - time: 800
+        positions: {1: 500, 2: 520, 3: 500}
+
+  # 蹦迪动作 (循环)
+  dance:
+    name: "蹦迪"
+    description: "跟随节奏摆动"
+    loop: true
+    duration: 400
+    keyframes:
+      - time: 0
+        positions: {1: 400, 2: 600, 3: 400}
+      - time: 100
+        positions: {1: 500, 2: 500, 3: 500}
+      - time: 200
+        positions: {1: 600, 2: 400, 3: 600}
+      - time: 300
+        positions: {1: 500, 2: 500, 3: 500}
+      - time: 400
+        positions: {1: 400, 2: 600, 3: 400}
+
+  # 打招呼
+  wave:
+    name: "打招呼"
+    description: "看到人时的招呼动作"
+    loop: false
+    duration: 1000
+    keyframes:
+      - time: 0
+        positions: {1: 500, 2: 500, 3: 500}
+      - time: 250
+        positions: {1: 400, 2: 550, 3: 500}
+      - time: 500
+        positions: {1: 600, 2: 550, 3: 500}
+      - time: 750
+        positions: {1: 400, 2: 550, 3: 500}
+      - time: 1000
+        positions: {1: 500, 2: 500, 3: 500}
+
+  # 休眠姿态
+  sleep:
+    name: "休眠"
+    description: "低头休眠姿态"
+    loop: false
+    duration: 500
+    keyframes:
+      - time: 0
+        positions: {1: 500, 2: 500, 3: 500}
+      - time: 500
+        positions: {1: 500, 2: 300, 3: 500}
+
+  # 唤醒姿态
+  wakeup:
+    name: "唤醒"
+    description: "从休眠中醒来"
+    loop: false
+    duration: 600
+    keyframes:
+      - time: 0
+        positions: {1: 500, 2: 300, 3: 500}
+      - time: 300
+        positions: {1: 500, 2: 550, 3: 500}
+      - time: 600
+        positions: {1: 500, 2: 500, 3: 500}
+
+  # 回到中位
+  home:
+    name: "归位"
+    description: "回到默认位置"
+    loop: false
+    duration: 500
+    keyframes:
+      - time: 0
+        positions: {1: 500, 2: 500, 3: 500}

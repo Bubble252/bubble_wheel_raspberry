@@ -44,9 +44,10 @@ SERVO_CONFIG = {
         'direction': -1,      # 反方向
         'name': '中间'
     },
-    1: {  # 顶端舵机 (固定)
+    1: {  # 顶端舵机
         'zero_pos': 475,      # 0度位置编码
-        'fixed': True,
+        'max_pos': 70,        # 最小位置编码
+        'direction': -1,      # 反方向
         'name': '顶端'
     }
 }
@@ -62,34 +63,35 @@ STS_GOAL_POSITION_L = 42
 STS_PRESENT_POSITION_L = 56
 
 # ========== 逆解算函数 ==========
-def inverse_kinematics(b, theta_0_deg):
+def inverse_kinematics(b, theta_0_deg, beta_deg=0):
     """
     计算逆解
     
     Args:
         b: 等腰三角形底边长 (米)
         theta_0_deg: 底边角度 (度)
+        beta_deg: 灯俯仰角度 (度)，正值向下俯，负值向上仰
     
     Returns:
-        (alpha_1, alpha_2, valid): 两个舵机角度(度), 是否有效
+        (alpha_1, alpha_2, alpha_3, valid): 三个舵机角度(度), 是否有效
     """
     a = ARM_LENGTH
     
     # 检查三角形是否有效
     if b >= 2 * a:
         print(f"  ✗ 无效: b={b:.3f}m 大于等于 2a={2*a:.3f}m")
-        return None, None, False
+        return None, None, None, False
     
     if b <= 0:
         print(f"  ✗ 无效: b={b:.3f}m 必须大于0")
-        return None, None, False
+        return None, None, None, False
     
     # 计算 theta_1 (顶角的一半, 2*theta_1 是等腰三角形的顶角)
     # sin(theta_1) = b/(2a)
     sin_theta_1 = b / (2 * a)
     if abs(sin_theta_1) > 1:
         print(f"  ✗ 无效: sin(theta_1)={sin_theta_1:.3f} 超出范围")
-        return None, None, False
+        return None, None, None, False
     
     theta_1_rad = math.asin(sin_theta_1)
     theta_1_deg = math.degrees(theta_1_rad)
@@ -100,7 +102,7 @@ def inverse_kinematics(b, theta_0_deg):
     cos_theta_2 = b / (2 * a)
     if abs(cos_theta_2) > 1:
         print(f"  ✗ 无效: cos(theta_2)={cos_theta_2:.3f} 超出范围")
-        return None, None, False
+        return None, None, None, False
     
     theta_2_rad = math.acos(cos_theta_2)
     theta_2_deg = math.degrees(theta_2_rad)
@@ -108,8 +110,9 @@ def inverse_kinematics(b, theta_0_deg):
     # 计算舵机角度
     alpha_1 = theta_0_deg - theta_2_deg  # 底部舵机
     alpha_2 = 180 - 2 * theta_1_deg      # 中间舵机
+    alpha_3 = 180 + beta_deg - alpha_2 - alpha_1  # 顶端舵机（灯俯仰）
     
-    return alpha_1, alpha_2, True
+    return alpha_1, alpha_2, alpha_3, True
 
 
 def angle_to_encoder(servo_id, angle_deg):
@@ -157,7 +160,7 @@ def encoder_to_angle(servo_id, encoder):
     return angle_deg
 
 
-def print_solution(b, theta_0_deg, alpha_1, alpha_2):
+def print_solution(b, theta_0_deg, beta_deg, alpha_1, alpha_2, alpha_3):
     """打印求解结果"""
     print(f"\n{'='*60}")
     print(f"逆解算结果:")
@@ -165,22 +168,24 @@ def print_solution(b, theta_0_deg, alpha_1, alpha_2):
     print(f"输入参数:")
     print(f"  底边长 b:        {b:.4f} m")
     print(f"  底边角度 theta_0: {theta_0_deg:.2f}°")
+    print(f"  灯俯仰角 beta:   {beta_deg:.2f}°")
     print()
     
     print(f"计算的舵机角度:")
     print(f"  alpha_1 (底部):  {alpha_1:.2f}°")
     print(f"  alpha_2 (中间):  {alpha_2:.2f}°")
+    print(f"  alpha_3 (顶端):  {alpha_3:.2f}°  (= 180 + {beta_deg:.1f} - {alpha_2:.1f} - {alpha_1:.1f})")
     print()
     
     # 计算编码值
     enc_1 = angle_to_encoder(3, alpha_1)
     enc_2 = angle_to_encoder(2, alpha_2)
-    enc_3 = SERVO_CONFIG[1]['zero_pos']  # 固定
+    enc_3 = angle_to_encoder(1, alpha_3)
     
     print(f"对应的编码值:")
     print(f"  ID3 (底部): {enc_1:4d}  (范围: {SERVO_CONFIG[3]['zero_pos']}-{SERVO_CONFIG[3]['max_pos']})")
     print(f"  ID2 (中间): {enc_2:4d}  (范围: {SERVO_CONFIG[2]['max_pos']}-{SERVO_CONFIG[2]['zero_pos']})")
-    print(f"  ID1 (顶端): {enc_3:4d}  (固定)")
+    print(f"  ID1 (顶端): {enc_3:4d}  (范围: {SERVO_CONFIG[1]['max_pos']}-{SERVO_CONFIG[1]['zero_pos']})")
     print(f"{'='*60}")
     
     return enc_1, enc_2, enc_3
@@ -297,7 +302,8 @@ def interactive_mode(simulate=True):
     print(f"有效底边范围: 0 < b < {2*ARM_LENGTH} m")
     print()
     print("命令:")
-    print("  输入 'b theta_0' 测试逆解 (例如: 0.2 45)")
+    print("  输入 'b theta_0 [beta]' 测试逆解 (例如: 0.2 45 或 0.2 45 10)")
+    print("  beta 默认为 0，正值向下俯，负值向上仰")
     print("  preset - 使用预设参数测试")
     print("  q - 退出")
     print("-"*60)
@@ -313,24 +319,25 @@ def interactive_mode(simulate=True):
                 test_presets(port_handler, packet_handler, simulate)
                 continue
             
-            # 解析 b 和 theta_0
+            # 解析 b, theta_0, beta
             try:
                 parts = cmd.split()
-                if len(parts) != 2:
-                    print("✗ 请输入两个参数: b theta_0")
+                if len(parts) < 2 or len(parts) > 3:
+                    print("✗ 请输入参数: b theta_0 [beta]")
                     continue
                 
                 b = float(parts[0])
                 theta_0_deg = float(parts[1])
+                beta_deg = float(parts[2]) if len(parts) > 2 else 0
                 
                 # 逆解算
-                alpha_1, alpha_2, valid = inverse_kinematics(b, theta_0_deg)
+                alpha_1, alpha_2, alpha_3, valid = inverse_kinematics(b, theta_0_deg, beta_deg)
                 
                 if not valid:
                     continue
                 
                 # 打印结果
-                enc_1, enc_2, enc_3 = print_solution(b, theta_0_deg, alpha_1, alpha_2)
+                enc_1, enc_2, enc_3 = print_solution(b, theta_0_deg, beta_deg, alpha_1, alpha_2, alpha_3)
                 
                 # 发送指令
                 if not simulate:
@@ -364,13 +371,14 @@ def interactive_mode(simulate=True):
 def test_presets(port_handler, packet_handler, simulate):
     """测试预设参数"""
     presets = [
-        {'name': '直立中位', 'b': 0.1, 'theta_0': 90},
-        {'name': '前倾45度', 'b': 0.15, 'theta_0': 45},
-        {'name': '后倾135度', 'b': 0.15, 'theta_0': 135},
-        {'name': '水平0度', 'b': 0.2, 'theta_0': 0},
-        {'name': '水平180度', 'b': 0.2, 'theta_0': 180},
-        {'name': '最小间距', 'b': 0.05, 'theta_0': 90},
-        {'name': '最大间距', 'b': 0.28, 'theta_0': 90},
+        {'name': '直立中位', 'b': 0.1, 'theta_0': 90, 'beta': 0},
+        {'name': '直立+俯10度', 'b': 0.1, 'theta_0': 90, 'beta': 10},
+        {'name': '直立+仰10度', 'b': 0.1, 'theta_0': 90, 'beta': -10},
+        {'name': '前倾45度', 'b': 0.15, 'theta_0': 45, 'beta': 0},
+        {'name': '后倾135度', 'b': 0.15, 'theta_0': 135, 'beta': 0},
+        {'name': '水平0度', 'b': 0.2, 'theta_0': 0, 'beta': 0},
+        {'name': '最小间距', 'b': 0.05, 'theta_0': 90, 'beta': 0},
+        {'name': '最大间距', 'b': 0.28, 'theta_0': 90, 'beta': 0},
     ]
     
     print("\n" + "="*60)
@@ -383,14 +391,15 @@ def test_presets(port_handler, packet_handler, simulate):
         
         b = preset['b']
         theta_0_deg = preset['theta_0']
+        beta_deg = preset.get('beta', 0)
         
-        alpha_1, alpha_2, valid = inverse_kinematics(b, theta_0_deg)
+        alpha_1, alpha_2, alpha_3, valid = inverse_kinematics(b, theta_0_deg, beta_deg)
         
         if not valid:
             print("  跳过无效配置")
             continue
         
-        enc_1, enc_2, enc_3 = print_solution(b, theta_0_deg, alpha_1, alpha_2)
+        enc_1, enc_2, enc_3 = print_solution(b, theta_0_deg, beta_deg, alpha_1, alpha_2, alpha_3)
         
         if not simulate:
             confirm = input("\n是否发送到舵机? (y/N/q退出): ")
@@ -417,10 +426,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python test_ik.py --simulate                    # 模拟模式
-  python test_ik.py                               # 真实舵机交互模式
-  python test_ik.py -b 0.2 -t 45 --simulate      # 计算指定参数
-  python test_ik.py -b 0.2 -t 45                  # 计算并发送到舵机
+  python test_ik.py --simulate                          # 模拟模式
+  python test_ik.py                                     # 真实舵机交互模式
+  python test_ik.py -b 0.2 -t 45 --simulate            # 计算指定参数 (beta=0)
+  python test_ik.py -b 0.2 -t 45 --beta 10 --simulate  # 计算指定参数 (俯10度)
+  python test_ik.py -b 0.2 -t 45 --beta -10            # 计算并发送到舵机 (仰10度)
         """
     )
     
@@ -442,6 +452,13 @@ def main():
         help='底边角度 theta_0 (度)'
     )
     
+    parser.add_argument(
+        '--beta',
+        type=float,
+        default=0,
+        help='灯俯仰角 beta (度), 正值向下俯, 负值向上仰, 默认0'
+    )
+    
     args = parser.parse_args()
     
     print("="*60)
@@ -454,8 +471,9 @@ def main():
     if args.base is not None and args.theta is not None:
         b = args.base
         theta_0_deg = args.theta
+        beta_deg = args.beta
         
-        alpha_1, alpha_2, valid = inverse_kinematics(b, theta_0_deg)
+        alpha_1, alpha_2, alpha_3, valid = inverse_kinematics(b, theta_0_deg, beta_deg)
         
         if not valid:
             if not SERVO_SDK_AVAILABLE:
@@ -465,7 +483,7 @@ def main():
             
             return
         
-        enc_1, enc_2, enc_3 = print_solution(b, theta_0_deg, alpha_1, alpha_2)
+        enc_1, enc_2, enc_3 = print_solution(b, theta_0_deg, beta_deg, alpha_1, alpha_2, alpha_3)
         
         if not args.simulate:
             # 初始化舵机
