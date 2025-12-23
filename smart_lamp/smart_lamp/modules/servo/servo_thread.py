@@ -63,6 +63,16 @@ class ServoThread(threading.Thread):
             self._print("舵机连接失败")
             return
         
+        # ========== 调试：只 connect，不通信 ==========
+        self._print("【调试模式】只打开串口，不进行任何通信")
+        while self._running:
+            import time
+            time.sleep(1)
+        self.driver.disconnect()
+        self._print("舵机线程退出")
+        return
+        # ========== 调试结束 ==========
+        
         # 扫描在线舵机
         online = []
         for sid in self.servo_ids:

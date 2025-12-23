@@ -731,8 +731,7 @@ class RealServoController:
         ]
         
         try:
-            # 使用 writeTxOnly 只发送不等回复，避免阻塞
-            self.packet_handler.writeTxOnly(servo_id, self.STS_GOAL_POSITION_L, len(data), data)
+            self.packet_handler.writeTxRx(servo_id, self.STS_GOAL_POSITION_L, len(data), data)
         except Exception as e:
             print(f"写入舵机 {servo_id} 失败: {e}")
     
@@ -746,16 +745,59 @@ class RealServoController:
 
 
 class ServoThread:
-    """舵机线程包装（适配 HandFollowMode 的接口）"""
+    """
+    舵机发送线程（独立线程，避免阻塞主线程）
+    
+    主线程调用 set_position() 只是把指令塞进队列，立即返回。
+    独立线程循环从队列取指令，调用 writeTxRx 发送。
+    """
     
     def __init__(self, servo_controller: RealServoController):
+        import threading
+        import queue
+        
         self._controller = servo_controller
         self._speed = 500  # 默认速度
+        
+        # 指令队列（最多缓存10个，满了就丢弃旧的）
+        self._queue = queue.Queue(maxsize=10)
+        
+        # 发送线程
+        self._running = True
+        self._thread = threading.Thread(target=self._send_loop, daemon=True, name="ServoSendThread")
+        self._thread.start()
+        print("✓ 舵机发送线程已启动")
     
     def set_position(self, servo_id: int, position: int, speed: int = None):
-        """设置舵机位置（直接发送）"""
+        """
+        设置舵机位置（非阻塞，塞进队列立即返回）
+        """
+        import queue
         spd = speed if speed is not None else self._speed
-        self._controller.write_position(servo_id, position, spd)
+        try:
+            # put_nowait: 队列满就抛异常，不阻塞
+            self._queue.put_nowait((servo_id, position, spd))
+        except queue.Full:
+            # 队列满了，丢弃这条指令（保证实时性）
+            pass
+    
+    def _send_loop(self):
+        """发送线程主循环：不断从队列取指令发送"""
+        while self._running:
+            try:
+                # 等待指令，超时0.1秒检查一次 _running
+                servo_id, position, speed = self._queue.get(timeout=0.1)
+                self._controller.write_position(servo_id, position, speed)
+            except:
+                # queue.Empty 或其他异常，继续循环
+                pass
+    
+    def stop(self):
+        """停止发送线程"""
+        self._running = False
+        if self._thread.is_alive():
+            self._thread.join(timeout=1)
+        print("舵机发送线程已停止")
 
 
 def test_hand_follow_mode():
@@ -844,6 +886,10 @@ def test_hand_follow_mode():
         mode.exit()
         cap.release()
         cv2.destroyAllWindows()
+        
+        # 停止舵机发送线程
+        if controller._servo_thread:
+            controller._servo_thread.stop()
         
         # 断开舵机连接
         if servo_controller._connected:
