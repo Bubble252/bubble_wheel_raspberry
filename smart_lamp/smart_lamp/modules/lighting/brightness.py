@@ -1,6 +1,12 @@
 """
 亮度控制器
-通过 UART 串口向 STM32 发送亮度值 (0.0 ~ 1.0)
+通过 USB 虚拟串口向 STM32 发送亮度值
+
+协议格式：2字节
+  - 字节1: 帧头 0xAA
+  - 字节2: 亮度值 67~101（67=关灯/0%，101=最亮/100%）
+  
+注意：避免发送 0x00
 """
 import serial
 import threading
@@ -12,7 +18,19 @@ class BrightnessController:
     """
     亮度控制器
     通过串口向 STM32 发送目标亮度值
+    
+    协议：[0xAA] [亮度值]
+      - 帧头: 0xAA
+      - 亮度值: 67~101 (67=0%, 101=100%)
+      - 避免发送 0x00
     """
+    
+    # 帧头
+    FRAME_HEADER = 0xAA
+    
+    # 亮度值范围
+    BRIGHTNESS_MIN = 67   # 对应 0%
+    BRIGHTNESS_MAX = 101  # 对应 100%
     
     def __init__(self, config: dict):
         """
@@ -23,7 +41,7 @@ class BrightnessController:
         """
         stm32_config = config.get('stm32', {})
         
-        self.port = stm32_config.get('port', '/dev/ttyAMA0')
+        self.port = stm32_config.get('port', '/dev/ttyACM0')
         self.baudrate = stm32_config.get('baudrate', 115200)
         self.timeout = stm32_config.get('timeout', 1)
         
@@ -84,18 +102,22 @@ class BrightnessController:
         brightness = max(0.0, min(1.0, brightness))
         self._current_brightness = brightness
         
+        # 将 0.0~1.0 映射到 67~101 的整数
+        # 0.0 -> 67, 1.0 -> 101
+        level = round(brightness * (self.BRIGHTNESS_MAX - self.BRIGHTNESS_MIN) + self.BRIGHTNESS_MIN)
+        level = max(self.BRIGHTNESS_MIN, min(self.BRIGHTNESS_MAX, level))
+        
         # 确保连接
         if not self._connected:
             if not self.connect():
-                print(f"[模拟] 设置亮度: {brightness:.3f}")
+                print(f"[模拟] 设置亮度: {brightness:.2f} -> level {level}")
                 return True  # 模拟模式
         
         with self._lock:
             try:
-                # 发送亮度值（简单文本协议）
-                # 格式: "0.750\n"
-                data = f"{brightness:.3f}\n"
-                self._serial.write(data.encode('utf-8'))
+                # 发送两字节: [帧头 0xAA] [亮度值 67~101]
+                data = bytes([self.FRAME_HEADER, level])
+                self._serial.write(data)
                 self._serial.flush()
                 return True
             except Exception as e:
@@ -153,23 +175,26 @@ class BrightnessController:
         读取实际亮度（从 STM32 反馈）
         
         Returns:
-            实际亮度值，失败返回 None
+            实际亮度值 (0.0~1.0)，失败返回 None
         """
         if not self._connected:
             return None
         
         with self._lock:
             try:
-                # 发送查询命令
-                self._serial.write(b"?\n")
+                # 发送查询命令 (0xFF 作为查询指令)
+                self._serial.write(bytes([0xFF]))
                 self._serial.flush()
                 
                 # 等待响应
                 time.sleep(0.1)
                 
                 if self._serial.in_waiting > 0:
-                    response = self._serial.readline().decode('utf-8').strip()
-                    return float(response)
+                    # 读取单字节响应 (0~10)
+                    response = self._serial.read(1)
+                    if response:
+                        level = response[0]
+                        return level / 10.0  # 转回 0.0~1.0
             except:
                 pass
         
