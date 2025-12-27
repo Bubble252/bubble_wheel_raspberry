@@ -1,165 +1,343 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-桌宠动作测试工具
-用于逐个测试 actions.yaml 中的动作序列
+桌宠动作测试工具 (支持逆解参数)
+
+支持两种模式:
+1. 播放 actions.yaml 中定义的动作
+2. 直接输入 b, theta_0, beta 参数测试姿态
+
+用法:
+    python test_pet_actions.py [--simulate] [--action NAME] [--all]
+    python test_pet_actions.py --pose 0.1 90 0   # 直接测试姿态
 """
 
+import os
 import sys
 import time
+import argparse
 from pathlib import Path
 
 # 添加项目路径
 PROJECT_ROOT = Path(__file__).parent.absolute()
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from smart_lamp.hardware.servo_thread import ServoThread
-from smart_lamp.modes.pet_mode import PetMode
+# 导入逆解算模块
+from smart_lamp.utils.kinematics import (
+    pose_to_encoders, 
+    inverse_kinematics,
+    get_home_encoders,
+    SERVO_CONFIG,
+    SERVO_LIMITS,
+)
+
+# 舵机配置
+SERIAL_PORT = '/dev/ttyUSB0'
+BAUDRATE = 1000000
+
+
+class RealServoController:
+    """真实舵机控制器"""
+    
+    STS_GOAL_POSITION_L = 42
+    
+    def __init__(self, port=SERIAL_PORT, baudrate=BAUDRATE):
+        self.port = port
+        self.baudrate = baudrate
+        self.port_handler = None
+        self.packet_handler = None
+        self._connected = False
+        
+    def connect(self) -> bool:
+        """连接舵机"""
+        try:
+            # 添加 scservo_sdk 路径
+            sdk_path = os.path.join(PROJECT_ROOT, 'scservo_sdk')
+            sys.path.insert(0, sdk_path)
+            
+            from scservo_sdk import PortHandler, sms_sts, COMM_SUCCESS
+            
+            self.COMM_SUCCESS = COMM_SUCCESS
+            
+            self.port_handler = PortHandler(self.port)
+            if not self.port_handler.openPort():
+                print(f"✗ 无法打开串口: {self.port}")
+                return False
+            
+            if not self.port_handler.setBaudRate(self.baudrate):
+                print(f"✗ 无法设置波特率: {self.baudrate}")
+                return False
+            
+            self.packet_handler = sms_sts(self.port_handler)
+            self._connected = True
+            print(f"✓ 舵机连接成功: {self.port}")
+            return True
+            
+        except ImportError as e:
+            print(f"✗ scservo_sdk 导入失败: {e}")
+            return False
+        except Exception as e:
+            print(f"✗ 连接失败: {e}")
+            return False
+    
+    def disconnect(self):
+        """断开连接"""
+        if self.port_handler:
+            self.port_handler.closePort()
+            self._connected = False
+            print("舵机已断开连接")
+    
+    def move(self, servo_id: int, position: int, speed: int = 500):
+        """移动单个舵机"""
+        if not self._connected:
+            return
+        
+        position = max(0, min(1023, position))
+        
+        data = [
+            (position >> 8) & 0xFF,
+            position & 0xFF,
+            0, 0,
+            (speed >> 8) & 0xFF,
+            speed & 0xFF
+        ]
+        
+        try:
+            self.packet_handler.writeTxRx(servo_id, self.STS_GOAL_POSITION_L, len(data), data)
+        except Exception as e:
+            print(f"写入舵机 {servo_id} 失败: {e}")
+    
+    def sync_move(self, positions: dict, speed: int = 500):
+        """同步移动多个舵机"""
+        for servo_id, pos in positions.items():
+            self.move(servo_id, pos, speed)
+
+
+class MockServoController:
+    """模拟舵机控制器"""
+    
+    def connect(self) -> bool:
+        print("✓ 模拟模式: 舵机已连接")
+        return True
+    
+    def disconnect(self):
+        print("模拟模式: 舵机已断开")
+    
+    def move(self, servo_id: int, position: int, speed: int = 500):
+        pass
+    
+    def sync_move(self, positions: dict, speed: int = 500):
+        pass
 
 
 class ActionTester:
     """动作测试器"""
     
-    def __init__(self, servo_thread=None, simulate=False):
-        """
-        Args:
-            servo_thread: 舵机线程（可选，不提供则模拟）
-            simulate: 是否模拟模式（不控制真实舵机）
-        """
-        self.servo_thread = servo_thread
+    def __init__(self, servo, simulate=False):
+        self.servo = servo
         self.simulate = simulate
+        self.actions = {}
+        self._load_actions()
+    
+    def _load_actions(self):
+        """加载动作配置"""
+        import yaml
         
-        if servo_thread:
-            self.actions = servo_thread.actions
+        actions_file = PROJECT_ROOT / 'config' / 'actions.yaml'
+        if actions_file.exists():
+            with open(actions_file, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+                self.actions = config.get('actions', {})
+            print(f"加载了 {len(self.actions)} 个动作")
         else:
-            # 模拟模式：从配置加载动作
-            from smart_lamp.utils.config import load_config
-            config = load_config()
-            self.actions = config.get('actions', {})
-        
-        self.action_names = list(self.actions.keys()) if self.actions else []
-        
+            print(f"⚠ 动作配置文件不存在: {actions_file}")
+    
     def list_actions(self):
-        """列出所有可用动作"""
+        """列出所有动作"""
         print("\n" + "=" * 60)
         print("可用动作列表:")
         print("=" * 60)
         
-        if not self.action_names:
-            print("  ⚠ 未找到任何动作定义")
-            return
-        
-        for i, action_name in enumerate(self.action_names, 1):
-            action = self.actions[action_name]
-            duration = self._estimate_duration(action)
-            print(f"  {i}. {action_name:<15} (预计时长: {duration:.1f}s)")
+        for i, (name, action) in enumerate(self.actions.items(), 1):
+            desc = action.get('description', '')
+            duration = action.get('duration', 0)
+            loop = '🔁' if action.get('loop', False) else ''
+            print(f"  {i:2}. {name:<12} {loop} ({duration}ms) - {desc}")
         
         print("=" * 60)
-        
-    def _estimate_duration(self, action) -> float:
-        """估算动作时长"""
-        if isinstance(action, dict) and 'frames' in action:
-            frames = action['frames']
-            total_time = sum(frame.get('duration', 0.5) for frame in frames)
-            return total_time
-        return 0.0
     
-    def test_action(self, action_name: str, repeat: int = 1):
+    def test_pose(self, b: float, theta_0: float, beta: float, speed: int = 300):
         """
-        测试单个动作
+        测试单个姿态
+        
+        Args:
+            b: 底边长 (米)
+            theta_0: 底边角度 (度)
+            beta: 俯仰角 (度)
+            speed: 移动速度
+        """
+        print(f"\n▶ 测试姿态: b={b:.3f}m, θ₀={theta_0}°, β={beta}°")
+        
+        # 计算逆解
+        alpha_1, alpha_2, alpha_3, valid = inverse_kinematics(b, theta_0, beta)
+        
+        if not valid:
+            print(f"  ✗ 无效姿态！角度超出范围")
+            return False
+        
+        positions, _ = pose_to_encoders(b, theta_0, beta)
+        
+        print(f"  逆解角度: α₁={alpha_1:.1f}° (底), α₂={alpha_2:.1f}° (中), α₃={alpha_3:.1f}° (顶)")
+        print(f"  编码值: ID3={positions[3]}, ID2={positions[2]}, ID1={positions[1]}")
+        
+        if self.simulate:
+            print(f"  [模拟] 移动到位置")
+        else:
+            self.servo.sync_move(positions, speed)
+            print(f"  ✓ 已移动")
+        
+        return True
+    
+    def test_action(self, action_name: str, force_loop: bool = None):
+        """测试动作
         
         Args:
             action_name: 动作名称
-            repeat: 重复次数
+            force_loop: 强制循环设置，None表示使用yaml配置
         """
         if action_name not in self.actions:
             print(f"  ✗ 动作 '{action_name}' 不存在")
             return False
         
         action = self.actions[action_name]
-        duration = self._estimate_duration(action)
+        name = action.get('name', action_name)
+        desc = action.get('description', '')
+        duration = action.get('duration', 0)
+        loop = action.get('loop', False) if force_loop is None else force_loop
+        keyframes = action.get('keyframes', [])
         
-        print(f"\n▶ 播放动作: {action_name}")
-        print(f"  预计时长: {duration:.1f}s")
-        print(f"  重复次数: {repeat}")
+        print(f"\n▶ 播放动作: {name}")
+        print(f"  描述: {desc}")
+        print(f"  时长: {duration}ms, 循环: {loop}")
+        print(f"  关键帧数: {len(keyframes)}")
+        if loop:
+            print(f"  [提示] 按 Ctrl+C 停止循环")
+        print()
         
-        if self.simulate:
-            # 模拟模式：打印动作信息
-            self._print_action_details(action)
-            print(f"  [模拟] 等待 {duration * repeat:.1f}s...")
-            time.sleep(0.5)  # 短暂延迟，模拟执行
-        else:
-            # 真实舵机模式
-            if not self.servo_thread:
-                print("  ✗ 舵机线程未初始化")
-                return False
-            
-            for i in range(repeat):
-                if repeat > 1:
-                    print(f"  第 {i+1}/{repeat} 次播放...")
+        try:
+            loop_count = 0
+            while True:
+                loop_count += 1
+                if loop:
+                    print(f"  --- 第 {loop_count} 次循环 ---")
                 
-                self.servo_thread.play_action(action_name)
+                # 播放关键帧
+                for i, kf in enumerate(keyframes):
+                    kf_time = kf.get('time', 0)
+                    
+                    # 获取姿态参数
+                    if 'pose' in kf:
+                        pose = kf['pose']
+                        b = pose.get('b', 0.1)
+                        theta_0 = pose.get('theta_0', 90)
+                        beta = pose.get('beta', 0)
+                        
+                        positions, valid = pose_to_encoders(b, theta_0, beta)
+                        
+                        if not valid:
+                            print(f"  [{kf_time}ms] ✗ 无效姿态: b={b}, θ₀={theta_0}, β={beta}")
+                            continue
+                        
+                        print(f"  [{kf_time}ms] pose: b={b:.2f}, θ₀={theta_0}, β={beta} → "
+                              f"enc: [{positions[3]}, {positions[2]}, {positions[1]}]")
+                    
+                    elif 'positions' in kf:
+                        # 旧格式
+                        positions = {int(k): v for k, v in kf['positions'].items()}
+                        print(f"  [{kf_time}ms] positions: {positions}")
+                    
+                    else:
+                        print(f"  [{kf_time}ms] ✗ 无效关键帧格式")
+                        continue
+                    
+                    # 移动舵机
+                    if not self.simulate:
+                        self.servo.sync_move(positions, speed=500)
+                    
+                    # 等待到下一帧
+                    if i < len(keyframes) - 1:
+                        next_time = keyframes[i + 1].get('time', 0)
+                        wait_ms = next_time - kf_time
+                        if wait_ms > 0:
+                            time.sleep(wait_ms / 1000.0)
                 
-                # 等待动作完成
-                time.sleep(duration + 0.5)
+                # 如果不循环，退出
+                if not loop:
+                    break
+                    
+        except KeyboardInterrupt:
+            print(f"\n  ⏹ 循环已停止 (共 {loop_count} 次)")
         
-        print(f"  ✓ 动作完成\n")
+        print(f"\n  ✓ 动作完成")
         return True
     
-    def _print_action_details(self, action):
-        """打印动作详情（模拟模式）"""
-        if not isinstance(action, dict) or 'frames' not in action:
-            print("  动作格式无效")
-            return
-        
-        frames = action['frames']
-        print(f"  关键帧数量: {len(frames)}")
-        
-        for i, frame in enumerate(frames):
-            positions = frame.get('positions', {})
-            duration = frame.get('duration', 0.5)
-            print(f"    Frame {i+1}: {positions} (持续 {duration}s)")
-    
-    def test_all_actions(self):
+    def test_all(self):
         """测试所有动作"""
         print("\n" + "=" * 60)
-        print("开始测试所有动作")
+        print("测试所有动作")
         print("=" * 60)
         
-        for i, action_name in enumerate(self.action_names, 1):
-            print(f"\n[{i}/{len(self.action_names)}] ", end='')
-            self.test_action(action_name)
+        for name in self.actions.keys():
+            self.test_action(name)
+            time.sleep(1)
             
-            if i < len(self.action_names):
-                print("  等待 2s 后继续...")
-                time.sleep(2)
+            # 回到初始位置
+            self.go_home()
+            time.sleep(0.5)
         
-        print("=" * 60)
-        print("所有动作测试完成！")
-        print("=" * 60)
+        print("\n✓ 所有动作测试完成")
     
-    def interactive_test(self):
+    def go_home(self):
+        """回到初始位置"""
+        print("→ 归位中...")
+        home = get_home_encoders()
+        
+        if self.simulate:
+            print(f"  [模拟] home: {home}")
+        else:
+            self.servo.sync_move(home, speed=300)
+        
+        time.sleep(0.5)
+    
+    def interactive(self):
         """交互式测试"""
         print("\n" + "=" * 60)
-        print("桌宠动作 - 交互式测试")
+        print("交互式测试模式")
         print("=" * 60)
         
         self.list_actions()
         
         print("\n命令:")
-        print("  数字     - 播放对应动作")
-        print("  名称     - 播放指定动作")
-        print("  all      - 测试所有动作")
-        print("  list     - 列出所有动作")
-        print("  q        - 退出")
+        print("  <数字>                - 播放对应编号的动作")
+        print("  <动作名>              - 播放指定动作")
+        print("  pose <b> <θ₀> <β>     - 测试指定姿态")
+        print("  home                  - 回到初始位置")
+        print("  list                  - 列出所有动作")
+        print("  all                   - 测试所有动作")
+        print("  q                     - 退出")
         print("-" * 60)
+        
+        action_names = list(self.actions.keys())
         
         while True:
             try:
-                cmd = input("\n请输入命令: ").strip()
+                cmd = input("\n> ").strip()
+                
+                if not cmd:
+                    continue
                 
                 if cmd.lower() in ['q', 'quit', 'exit']:
-                    print("退出测试")
+                    print("退出")
                     break
                 
                 if cmd.lower() == 'list':
@@ -167,98 +345,120 @@ class ActionTester:
                     continue
                 
                 if cmd.lower() == 'all':
-                    self.test_all_actions()
+                    self.test_all()
                     continue
                 
-                # 尝试按编号
+                if cmd.lower() == 'home':
+                    self.go_home()
+                    continue
+                
+                # pose 命令
+                if cmd.lower().startswith('pose'):
+                    parts = cmd.split()
+                    if len(parts) >= 4:
+                        try:
+                            b = float(parts[1])
+                            theta_0 = float(parts[2])
+                            beta = float(parts[3])
+                            self.test_pose(b, theta_0, beta)
+                        except ValueError:
+                            print("  ✗ 参数格式错误: pose <b> <theta_0> <beta>")
+                    else:
+                        print("  用法: pose <b> <theta_0> <beta>")
+                        print("  例如: pose 0.1 90 0")
+                    continue
+                
+                # 数字编号
                 if cmd.isdigit():
                     idx = int(cmd) - 1
-                    if 0 <= idx < len(self.action_names):
-                        action_name = self.action_names[idx]
-                        self.test_action(action_name)
+                    if 0 <= idx < len(action_names):
+                        self.test_action(action_names[idx])
                     else:
-                        print(f"  ✗ 编号超出范围 (1-{len(self.action_names)})")
+                        print(f"  ✗ 编号超出范围 (1-{len(action_names)})")
                     continue
                 
-                # 尝试按名称
-                if cmd in self.action_names:
+                # 动作名
+                if cmd in self.actions:
                     self.test_action(cmd)
                 else:
-                    print(f"  ✗ 未知命令或动作: '{cmd}'")
+                    print(f"  ✗ 未知命令: '{cmd}'")
                     
             except KeyboardInterrupt:
-                print("\n\n用户中断")
+                print("\n\n中断")
                 break
             except Exception as e:
                 print(f"  ✗ 错误: {e}")
 
 
 def main():
-    """主函数"""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='桌宠动作测试工具')
-    parser.add_argument(
-        '--simulate',
-        action='store_true',
-        help='模拟模式（不控制真实舵机）'
+    parser = argparse.ArgumentParser(
+        description='桌宠动作测试工具 (支持逆解参数)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  %(prog)s                      # 交互式测试
+  %(prog)s --simulate           # 模拟模式（不控制舵机）
+  %(prog)s --action nod         # 测试指定动作 (根据yaml的loop字段循环)
+  %(prog)s --action nod --no-loop  # 测试动作但不循环
+  %(prog)s --all                # 测试所有动作
+  %(prog)s --pose 0.2 90 0      # 测试指定姿态 (b, theta_0, beta)
+        """
     )
-    parser.add_argument(
-        '--action',
-        type=str,
-        help='测试指定动作'
-    )
-    parser.add_argument(
-        '--all',
-        action='store_true',
-        help='测试所有动作'
-    )
+    parser.add_argument('--simulate', action='store_true', help='模拟模式')
+    parser.add_argument('--action', type=str, help='测试指定动作')
+    parser.add_argument('--no-loop', action='store_true', help='强制不循环（忽略yaml的loop字段）')
+    parser.add_argument('--all', action='store_true', help='测试所有动作')
+    parser.add_argument('--pose', nargs=3, type=float, metavar=('B', 'THETA0', 'BETA'),
+                        help='测试指定姿态')
+    parser.add_argument('--port', type=str, default=SERIAL_PORT, help='串口')
     
     args = parser.parse_args()
     
     print("=" * 60)
-    print("桌宠动作测试工具")
+    print("桌宠动作测试工具 (逆解参数版)")
     print("=" * 60)
     
-    # 初始化舵机线程
-    servo_thread = None
-    if not args.simulate:
-        print("\n正在初始化舵机...")
-        try:
-            from smart_lamp.hardware.servo_thread import ServoThread
-            servo_thread = ServoThread()
-            servo_thread.start()
-            time.sleep(0.5)
-            print("✓ 舵机初始化成功")
-        except Exception as e:
-            print(f"⚠ 舵机初始化失败: {e}")
-            print("  切换到模拟模式")
+    # 初始化舵机
+    if args.simulate:
+        servo = MockServoController()
+        servo.connect()
+    else:
+        servo = RealServoController(args.port, BAUDRATE)
+        if not servo.connect():
+            print("⚠ 舵机连接失败，切换到模拟模式")
+            servo = MockServoController()
+            servo.connect()
             args.simulate = True
     
-    # 创建测试器
-    tester = ActionTester(servo_thread=servo_thread, simulate=args.simulate)
-    
-    if args.simulate:
-        print("\n[模拟模式] 不会控制真实舵机")
+    tester = ActionTester(servo, simulate=args.simulate)
     
     try:
-        if args.action:
+        # 先归位
+        tester.go_home()
+        
+        if args.pose:
+            # 测试指定姿态
+            b, theta_0, beta = args.pose
+            tester.test_pose(b, theta_0, beta)
+        elif args.action:
             # 测试指定动作
-            tester.test_action(args.action)
+            force_loop = False if args.no_loop else None
+            tester.test_action(args.action, force_loop=force_loop)
         elif args.all:
             # 测试所有动作
-            tester.test_all_actions()
+            tester.test_all()
         else:
-            # 交互式测试
-            tester.interactive_test()
-    
+            # 交互式
+            tester.interactive()
+        
+        # 结束时归位
+        tester.go_home()
+        
+    except KeyboardInterrupt:
+        print("\n\n用户中断")
     finally:
-        # 清理
-        if servo_thread:
-            print("\n正在停止舵机线程...")
-            servo_thread.stop()
-            servo_thread.join(timeout=2)
-            print("✓ 已停止")
+        servo.disconnect()
+        print("\n测试结束")
 
 
 if __name__ == "__main__":

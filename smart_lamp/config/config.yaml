@@ -96,6 +96,24 @@ voice_commands:
   最暗:
     brightness: 0.1
 
+# 扬声器配置
+speaker:
+  enabled: true
+  cache_dir: "cache/tts"
+  music_dir: "MP3"
+  voice: "zh-CN-XiaoxiaoNeural"  # edge-tts语音
+  # 语音反馈配置
+  feedback:
+    wake_response: "主人，我在"
+    mode_switch: "切换到{mode}模式"
+    # 动作语音
+    actions:
+      nod:
+        text: "牛逼"
+        interval: 1.5
+      dance:
+        type: "music"  # 播放音乐
+
 # 模式语音命令
 mode_commands:
   hand_follow:

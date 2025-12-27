@@ -155,7 +155,7 @@ class ServoThread(threading.Thread):
             if not self._position_locked:
                 positions = cmd.get('positions', {})
                 speed = cmd.get('speed', 500)
-                self.driver.sync_move(positions, speed)
+                self.driver.move_all(positions, speed)
                 self._current_positions.update(positions)
             
         elif cmd_type == 'home':
@@ -170,9 +170,15 @@ class ServoThread(threading.Thread):
             self._print("位置已解锁")
     
     def _home(self):
-        """回到初始位置"""
-        home_pos = {sid: 512 for sid in self.servo_ids}
-        self.driver.sync_move(home_pos, speed=200)
+        """回到初始位置（使用逆解默认姿态）"""
+        try:
+            from ...utils.kinematics import get_home_encoders
+            home_pos = get_home_encoders()
+        except ImportError:
+            # 如果逆解模块不可用，使用固定中位
+            home_pos = {sid: 512 for sid in self.servo_ids}
+        
+        self.driver.move_all(home_pos, speed=200)
         self._current_positions = home_pos.copy()
     
     def _do_init(self):

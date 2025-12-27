@@ -69,6 +69,12 @@ class PetMode(BaseMode):
     
     def on_exit(self):
         """退出模式：告别动作"""
+        # 立即停止所有播放（音乐/语音循环）
+        if self.controller:
+            speaker = getattr(self.controller, '_speaker', None)
+            if speaker:
+                speaker.stop_immediately()  # 立即停止，不通过队列
+        
         self._play_action('sleep')
         self._print("桌宠休息了~")
     
@@ -141,6 +147,19 @@ class PetMode(BaseMode):
                 self._debug(f"播放动作: {action_name}")
             else:
                 self._print(f"[模拟] 播放动作: {action_name}")
+            
+            # 先立即停止之前的循环播放（重要！切换动作时必须先停止）
+            speaker = getattr(self.controller, '_speaker', None)
+            if speaker:
+                speaker.stop_immediately()  # 立即停止，不通过队列
+                
+                # 根据动作类型启动新的语音反馈
+                if action_name == 'nod':
+                    # 点头：每1.5秒说"牛逼"
+                    speaker.start_nod_voice("牛逼", 1.5)
+                elif action_name == 'dance':
+                    # 跳舞：循环随机播放音乐
+                    speaker.start_dance_music()
     
     def _stop_action(self):
         """停止当前动作"""
@@ -151,6 +170,11 @@ class PetMode(BaseMode):
             servo_thread = getattr(self.controller, '_servo_thread', None)
             if servo_thread:
                 servo_thread.stop_action()
+            
+            # 立即停止语音循环
+            speaker = getattr(self.controller, '_speaker', None)
+            if speaker:
+                speaker.stop_immediately()
     
     def _check_idle_action(self):
         """检查是否需要播放待机随机动作"""

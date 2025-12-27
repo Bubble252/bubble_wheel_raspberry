@@ -8,6 +8,15 @@ import math
 import numpy as np
 from typing import Optional, Tuple, Dict, Any
 from .base_mode import BaseMode
+from ..utils.kinematics import (
+    inverse_kinematics,
+    angle_to_encoder,
+    pose_to_encoders,
+    get_home_encoders,
+    SERVO_CONFIG,
+    SERVO_LIMITS,
+    ARM_LENGTH,
+)
 
 
 # ========== 手部检测器（内嵌版本）==========
@@ -171,32 +180,7 @@ class EmbeddedSingleHandDetector:
             self.hand_detector.close()
 
 
-# ========== 逆解算常量 ==========
-ARM_LENGTH = 0.145  # 连杆长度 (米)
-ENCODER_PER_90_DEG = 410  # 410个编码对应90度
-ENCODER_PER_DEG = ENCODER_PER_90_DEG / 90.0  # 每度对应的编码数
-
-# 舵机编码配置
-SERVO_CONFIG = {
-    3: {  # 底部舵机
-        'zero_pos': 400,
-        'max_pos': 1023,
-        'direction': 1,
-        'name': '底部'
-    },
-    2: {  # 中间舵机
-        'zero_pos': 500,
-        'max_pos': 0,
-        'direction': -1,
-        'name': '中间'
-    },
-    1: {  # 顶端舵机
-        'zero_pos': 475,
-        'max_pos': 70,
-        'direction': -1,
-        'name': '顶端'
-    }
-}
+# 注: 逆解算常量和配置已移到 utils/kinematics.py
 
 
 class HandFollowMode(BaseMode):
@@ -219,13 +203,9 @@ class HandFollowMode(BaseMode):
     def __init__(self, controller):
         super().__init__(controller)
         
-        # 舵机配置（使用逆解算配置）
+        # 舵机配置（使用共享的逆解算配置）
         self.servo_ids = [1, 2, 3]
-        self.servo_limits = {
-            3: (400, 1023),   # 底部
-            2: (0, 500),      # 中间
-            1: (70, 475),     # 顶端
-        }
+        self.servo_limits = SERVO_LIMITS  # 使用共享配置
         self.current_positions = {1: 475, 2: 500, 3: 400}
         
         # 手部检测相关
@@ -639,7 +619,7 @@ class HandFollowMode(BaseMode):
     
     def _inverse_kinematics(self, b, theta_0_deg, beta_deg=0):
         """
-        台灯连杆逆解算
+        台灯连杆逆解算（调用共享模块）
         
         Args:
             b: 等腰三角形底边长 (米)
@@ -649,60 +629,11 @@ class HandFollowMode(BaseMode):
         Returns:
             (alpha_1, alpha_2, alpha_3, valid): 三个舵机角度, 是否有效
         """
-        a = ARM_LENGTH
-        
-        # 检查三角形是否有效
-        if b >= 2 * a or b <= 0:
-            return None, None, None, False
-        
-        # sin(theta_1) = b/(2a)
-        sin_theta_1 = b / (2 * a)
-        if abs(sin_theta_1) > 1:
-            return None, None, None, False
-        
-        theta_1_rad = math.asin(sin_theta_1)
-        theta_1_deg = math.degrees(theta_1_rad)
-        
-        # cos(theta_2) = b/(2a)
-        cos_theta_2 = b / (2 * a)
-        if abs(cos_theta_2) > 1:
-            return None, None, None, False
-        
-        theta_2_rad = math.acos(cos_theta_2)
-        theta_2_deg = math.degrees(theta_2_rad)
-        
-        # 计算舵机角度
-        alpha_1 = theta_0_deg - theta_2_deg  # 底部
-        alpha_2 = 180 - 2 * theta_1_deg      # 中间
-        alpha_3 = 180 + beta_deg - alpha_2 - alpha_1  # 顶端
-        
-        # 检查角度是否在舵机可达范围内
-        # ID3 (底部): 0° ~ 136° (400→1023, 623编码 / 4.56 ≈ 136°)
-        # ID2 (中间): 0° ~ 109° (500→0, 500编码 / 4.56 ≈ 109°)
-        # ID1 (顶端): 0° ~ 88°  (475→70, 405编码 / 4.56 ≈ 88°)
-        if not (0 <= alpha_1 <= 136):
-            return None, None, None, False
-        if not (0 <= alpha_2 <= 109):
-            return None, None, None, False
-        if not (0 <= alpha_3 <= 88):
-            return None, None, None, False
-        
-        return alpha_1, alpha_2, alpha_3, True
+        return inverse_kinematics(b, theta_0_deg, beta_deg)
     
     def _angle_to_encoder(self, servo_id, angle_deg):
-        """角度转换为编码值"""
-        config = SERVO_CONFIG[servo_id]
-        
-        encoder_offset = angle_deg * ENCODER_PER_DEG * config['direction']
-        encoder = int(config['zero_pos'] + encoder_offset)
-        
-        # 限幅
-        if config['direction'] > 0:
-            encoder = max(config['zero_pos'], min(config['max_pos'], encoder))
-        else:
-            encoder = max(config['max_pos'], min(config['zero_pos'], encoder))
-        
-        return encoder
+        """角度转换为编码值（调用共享模块）"""
+        return angle_to_encoder(servo_id, angle_deg)
         
     def _move_servos(self, positions: Dict[int, int], speed: int = None):
         """移动舵机（带频率控制）"""

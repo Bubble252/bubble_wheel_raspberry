@@ -43,6 +43,13 @@ class MainController:
         LampState.BRIGHTNESS_MODE: BrightnessMode,
     }
     
+    # 模式名称映射（用于语音播报）
+    MODE_NAMES = {
+        LampState.HAND_FOLLOW: "手势跟随",
+        LampState.PET_MODE: "桌宠",
+        LampState.BRIGHTNESS_MODE: "亮度调节",
+    }
+    
     def __init__(self, config_path: str = "config/config.yaml"):
         """
         初始化主控制器
@@ -71,6 +78,7 @@ class MainController:
         self._voice = None
         self._servo_thread = None
         self._lighting = None
+        self._speaker = None  # 扬声器模块
         
         # 运行状态
         self._running = False
@@ -220,6 +228,17 @@ class MainController:
                     self._print("照明模块连接失败", "WARN")
             except Exception as e:
                 self._print(f"照明模块初始化失败: {e}", "ERROR")
+        
+        # 初始化扬声器
+        speaker_config = self.config.get('speaker', {})
+        if speaker_config.get('enabled', True):
+            try:
+                from ..modules.speaker import SpeakerThread
+                self._speaker = SpeakerThread(speaker_config)
+                self._speaker.start()
+                self._print("扬声器模块初始化成功", "SUCCESS")
+            except Exception as e:
+                self._print(f"扬声器模块初始化失败: {e}", "ERROR")
     
     def _stop_hardware(self):
         """停止硬件模块"""
@@ -233,7 +252,10 @@ class MainController:
             self._servo_thread.stop()
         
         if self._lighting:
-            self._lighting.disconnect()
+            self._lighting.close()
+        
+        if self._speaker:
+            self._speaker.shutdown()
     
     # ==================== 主循环 ====================
     
@@ -318,7 +340,9 @@ class MainController:
                     self._print(f"唤醒词检测到: {wake_word}", "SUCCESS")
                     self.state_machine.transition_to(LampState.LISTENING)
                     self._print("请说模式名称：手部跟随、桌宠模式、亮度调节")
-                    # TODO: 播放提示音
+                    # 语音反馈：主人，我在
+                    if self._speaker:
+                        self._speaker.speak("主人，我在")
                     return
             return
         
@@ -366,6 +390,10 @@ class MainController:
             self._current_mode.exit()
             self._current_mode = None
         
+        # 停止扬声器循环（如果有）
+        if self._speaker:
+            self._speaker.stop_loop()
+        
         # 创建新模式
         mode_class = self.MODE_CLASSES.get(target_state)
         if mode_class:
@@ -380,6 +408,11 @@ class MainController:
             else:
                 self._print(f"[DEBUG] 警告: _servo_thread 为 None!")
             
+            # 语音反馈：切换到XX模式
+            mode_name = self.MODE_NAMES.get(target_state, target_state.name)
+            if self._speaker:
+                self._speaker.speak(f"切换到{mode_name}模式")
+            
             self._current_mode.enter()
             self.state_machine.transition_to(target_state)
         else:
@@ -388,6 +421,10 @@ class MainController:
     
     def _exit_current_mode(self):
         """退出当前模式，返回待机"""
+        # 停止扬声器循环
+        if self._speaker:
+            self._speaker.stop_loop()
+        
         if self._current_mode:
             self._current_mode.exit()
             self._current_mode = None

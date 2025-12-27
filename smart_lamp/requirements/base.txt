@@ -4,3 +4,6 @@
 numpy>=1.21.0,<2.0.0
 PyYAML>=6.0
 pyserial>=3.5
+
+# TTS语音合成 (可选，推荐 edge-tts)
+edge-tts>=6.1.0

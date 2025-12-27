@@ -1,6 +1,9 @@
 """
 动作播放器
 根据动作库配置播放舵机动作序列
+支持两种关键帧格式:
+1. 旧格式: positions: {舵机ID: 编码}
+2. 新格式: pose: {b: 值, theta_0: 值, beta: 值}
 """
 import time
 import threading
@@ -9,6 +12,7 @@ from typing import Dict, List, Optional
 from pathlib import Path
 
 from .servo_driver import ServoDriver
+from ...utils.kinematics import pose_to_encoders, interpolate_pose, get_home_encoders
 
 
 class ActionPlayer:
@@ -53,17 +57,55 @@ class ActionPlayer:
             print(f"加载动作配置失败: {e}")
             self._load_default_actions()
     
+    def _keyframe_to_positions(self, kf: Dict) -> Dict[int, int]:
+        """
+        将关键帧转换为舵机位置
+        
+        支持两种格式:
+        1. 旧格式: positions: {舵机ID: 编码}
+        2. 新格式: pose: {b: 值, theta_0: 值, beta: 值}
+        
+        Args:
+            kf: 关键帧字典
+            
+        Returns:
+            舵机位置字典 {舵机ID: 编码}
+        """
+        # 优先使用新格式 (pose)
+        if 'pose' in kf:
+            pose = kf['pose']
+            b = pose.get('b', 0.1)
+            theta_0 = pose.get('theta_0', 90)
+            beta = pose.get('beta', 0)
+            
+            positions, valid = pose_to_encoders(b, theta_0, beta)
+            
+            if not valid:
+                print(f"警告: 无效的姿态 b={b}, theta_0={theta_0}, beta={beta}，使用默认位置")
+                return get_home_encoders()
+            
+            return positions
+        
+        # 旧格式 (positions)
+        elif 'positions' in kf:
+            positions = kf.get('positions', {})
+            # 转换键为整数
+            return {int(k): v for k, v in positions.items()}
+        
+        # 无效格式
+        return {}
+    
     def _load_default_actions(self):
-        """加载默认动作"""
+        """加载默认动作（使用新格式 pose）"""
         self.actions = {
             'nod': {
                 'name': '点头',
                 'loop': False,
                 'duration': 800,
                 'keyframes': [
-                    {'time': 0, 'positions': {1: 500, 2: 500, 3: 500}},
-                    {'time': 400, 'positions': {1: 500, 2: 650, 3: 500}},
-                    {'time': 800, 'positions': {1: 500, 2: 500, 3: 500}},
+                    {'time': 0, 'pose': {'b': 0.10, 'theta_0': 90, 'beta': 0}},
+                    {'time': 400, 'pose': {'b': 0.12, 'theta_0': 90, 'beta': -20}},
+                    {'time': 800, 'pose': {'b': 0.10, 'theta_0': 90, 'beta': 0}},
                 ]
             },
             'shake': {
@@ -71,10 +113,10 @@ class ActionPlayer:
                 'loop': False,
                 'duration': 1000,
                 'keyframes': [
-                    {'time': 0, 'positions': {1: 500, 2: 500, 3: 500}},
-                    {'time': 250, 'positions': {1: 350, 2: 500, 3: 500}},
-                    {'time': 750, 'positions': {1: 650, 2: 500, 3: 500}},
-                    {'time': 1000, 'positions': {1: 500, 2: 500, 3: 500}},
+                    {'time': 0, 'pose': {'b': 0.10, 'theta_0': 90, 'beta': 0}},
+                    {'time': 250, 'pose': {'b': 0.10, 'theta_0': 70, 'beta': 0}},
+                    {'time': 750, 'pose': {'b': 0.10, 'theta_0': 110, 'beta': 0}},
+                    {'time': 1000, 'pose': {'b': 0.10, 'theta_0': 90, 'beta': 0}},
                 ]
             },
             'home': {
@@ -82,7 +124,7 @@ class ActionPlayer:
                 'loop': False,
                 'duration': 500,
                 'keyframes': [
-                    {'time': 0, 'positions': {1: 500, 2: 500, 3: 500}},
+                    {'time': 0, 'pose': {'b': 0.10, 'theta_0': 90, 'beta': 0}},
                 ]
             }
         }
@@ -139,11 +181,10 @@ class ActionPlayer:
                     if self._stop_flag:
                         break
                     
-                    # 移动到关键帧位置
-                    positions = kf.get('positions', {})
-                    # 转换键为整数
-                    positions = {int(k): v for k, v in positions.items()}
-                    self.servo.move_all(positions)
+                    # 获取舵机位置
+                    positions = self._keyframe_to_positions(kf)
+                    if positions:
+                        self.servo.move_all(positions)
                     
                     # 计算等待时间
                     if i < len(keyframes) - 1:

@@ -1,139 +1,103 @@
 # ============================================
-# 动作库配置
+# 动作库配置 (使用逆解参数)
 # 定义舵机动作序列
 # ============================================
-# 舵机位置范围: 0-1000 (中位约500)
-# time: 关键帧时间(毫秒)
-# positions: {舵机ID: 位置}
+# 姿态参数说明:
+#   b: 等腰三角形底边长 (米), 有效范围约 0.17 ~ 0.28
+#      - b=0.17 接近竖直 (alpha_2≈109°)
+#      - b=0.20 约45度前倾 (alpha_2≈93°)
+#      - b=0.24 较大前倾 (alpha_2≈70°)
+#      - b=0.28 接近极限
+#   theta_0: 底边角度 (度), 台灯朝向, 范围约 30 ~ 150, 90为正前方
+#   beta: 灯头俯仰角 (度), 范围约 -20 ~ 50, 0为水平
+#
+# 关键帧格式:
+#   time: 关键帧时间(毫秒)
+#   pose: {b: 值, theta_0: 值, beta: 值}
 
 actions:
   # 点头动作
   nod:
     name: "点头"
     description: "台灯点头表示确认"
-    loop: false
-    duration: 800
+    loop: true
+    duration: 1500
     keyframes:
       - time: 0
-        positions: {1: 500, 2: 500, 3: 500}
-      - time: 300
-        positions: {1: 500, 2: 650, 3: 500}
+        pose: {b: 0.20, theta_0: 90, beta: 0}
       - time: 500
-        positions: {1: 500, 2: 400, 3: 500}
-      - time: 800
-        positions: {1: 500, 2: 500, 3: 500}
-
-  # 慢速点头
-  nod_slow:
-    name: "慢速点头"
-    description: "缓慢点头表示理解"
-    loop: false
-    duration: 1200
-    keyframes:
-      - time: 0
-        positions: {1: 500, 2: 500, 3: 500}
-      - time: 600
-        positions: {1: 500, 2: 600, 3: 500}
-      - time: 1200
-        positions: {1: 500, 2: 500, 3: 500}
-
-  # 摇头动作
-  shake:
-    name: "摇头"
-    description: "台灯摇头表示否定"
-    loop: false
-    duration: 1000
-    keyframes:
-      - time: 0
-        positions: {1: 500, 2: 500, 3: 500}
-      - time: 250
-        positions: {1: 350, 2: 500, 3: 500}
-      - time: 500
-        positions: {1: 500, 2: 500, 3: 500}
-      - time: 750
-        positions: {1: 650, 2: 500, 3: 500}
+        pose: {b: 0.20, theta_0: 90, beta: -40}   # 抬头
       - time: 1000
-        positions: {1: 500, 2: 500, 3: 500}
+        pose: {b: 0.20, theta_0: 90, beta: 40}    # 低头
+      - time: 1500
+        pose: {b: 0.20, theta_0: 90, beta: 0}
+
 
   # 卖萌动作
   cute:
     name: "卖萌"
     description: "可爱的小幅度摆动"
     loop: false
-    duration: 800
+    duration: 1000
     keyframes:
       - time: 0
-        positions: {1: 500, 2: 500, 3: 500}
+        pose: {b: 0.20, theta_0: 90, beta: 0}
       - time: 200
-        positions: {1: 480, 2: 550, 3: 520}
+        pose: {b: 0.18, theta_0: 80, beta: 15}    # 左倾抬头
       - time: 400
-        positions: {1: 520, 2: 530, 3: 480}
+        pose: {b: 0.19, theta_0: 100, beta: 10}   # 右倾
       - time: 600
-        positions: {1: 490, 2: 560, 3: 510}
+        pose: {b: 0.18, theta_0: 85, beta: 20}    # 歪头
       - time: 800
-        positions: {1: 500, 2: 520, 3: 500}
+        pose: {b: 0.19, theta_0: 95, beta: 15}
+      - time: 1000
+        pose: {b: 0.20, theta_0: 90, beta: 5}
 
   # 蹦迪动作 (循环)
   dance:
     name: "蹦迪"
     description: "跟随节奏摆动"
     loop: true
-    duration: 400
-    keyframes:
-      - time: 0
-        positions: {1: 400, 2: 600, 3: 400}
-      - time: 100
-        positions: {1: 500, 2: 500, 3: 500}
-      - time: 200
-        positions: {1: 600, 2: 400, 3: 600}
-      - time: 300
-        positions: {1: 500, 2: 500, 3: 500}
-      - time: 400
-        positions: {1: 400, 2: 600, 3: 400}
-
-  # 打招呼
-  wave:
-    name: "打招呼"
-    description: "看到人时的招呼动作"
-    loop: false
     duration: 1000
     keyframes:
       - time: 0
-        positions: {1: 500, 2: 500, 3: 500}
-      - time: 250
-        positions: {1: 400, 2: 550, 3: 500}
+        pose: {b: 0.26, theta_0: 70, beta: -50}
       - time: 500
-        positions: {1: 600, 2: 550, 3: 500}
-      - time: 750
-        positions: {1: 400, 2: 550, 3: 500}
+        pose: {b: 0.17, theta_0: 100, beta: 50}
       - time: 1000
-        positions: {1: 500, 2: 500, 3: 500}
+        pose: {b: 0.26, theta_0: 70, beta: -50}
+
+
 
   # 休眠姿态
   sleep:
     name: "休眠"
     description: "低头休眠姿态"
     loop: false
-    duration: 500
+    duration: 800
     keyframes:
       - time: 0
-        positions: {1: 500, 2: 500, 3: 500}
-      - time: 500
-        positions: {1: 500, 2: 300, 3: 500}
+        pose: {b: 0.20, theta_0: 90, beta: 0}
+      - time: 400
+        pose: {b: 0.18, theta_0: 90, beta: 10}
+      - time: 800
+        pose: {b: 0.168, theta_0: 90, beta: 45}    # 趴下
 
-  # 唤醒姿态
+  # 唤醒动作
   wakeup:
     name: "唤醒"
-    description: "从休眠中醒来"
+    description: "从休眠状态唤醒"
     loop: false
-    duration: 600
+    duration: 1000
     keyframes:
       - time: 0
-        positions: {1: 500, 2: 300, 3: 500}
+        pose: {b: 0.27, theta_0: 90, beta: -15}    # 趴着的状态
       - time: 300
-        positions: {1: 500, 2: 550, 3: 500}
+        pose: {b: 0.22, theta_0: 90, beta: 0}
       - time: 600
-        positions: {1: 500, 2: 500, 3: 500}
+        pose: {b: 0.18, theta_0: 90, beta: 25}     # 伸懒腰
+      - time: 1000
+        pose: {b: 0.20, theta_0: 90, beta: 0}
 
   # 回到中位
   home:
@@ -143,4 +107,80 @@ actions:
     duration: 500
     keyframes:
       - time: 0
-        positions: {1: 500, 2: 500, 3: 500}
+        pose: {b: 0.20, theta_0: 90, beta: 0}
+      - time: 500
+        pose: {b: 0.20, theta_0: 90, beta: 0}
+
+  # 好奇探头
+  curious:
+    name: "好奇"
+    description: "好奇地探头看"
+    loop: false
+    duration: 1000
+    keyframes:
+      - time: 0
+        pose: {b: 0.20, theta_0: 90, beta: 0}
+      - time: 300
+        pose: {b: 0.23, theta_0: 85, beta: 15}     # 向前探
+      - time: 600
+        pose: {b: 0.25, theta_0: 80, beta: 25}     # 继续探
+      - time: 800
+        pose: {b: 0.22, theta_0: 90, beta: 15}
+      - time: 1000
+        pose: {b: 0.20, theta_0: 90, beta: 0}
+
+  # 害羞躲避
+  shy:
+    name: "害羞"
+    description: "害羞地躲避"
+    loop: false
+    duration: 800
+    keyframes:
+      - time: 0
+        pose: {b: 0.20, theta_0: 90, beta: 0}
+      - time: 200
+        pose: {b: 0.18, theta_0: 100, beta: -5}    # 侧身低头
+      - time: 400
+        pose: {b: 0.17, theta_0: 110, beta: -10}
+      - time: 600
+        pose: {b: 0.18, theta_0: 105, beta: -5}
+      - time: 800
+        pose: {b: 0.20, theta_0: 90, beta: 0}
+
+  # 开心跳跃
+  happy:
+    name: "开心"
+    description: "开心的动作"
+    loop: false
+    duration: 800
+    keyframes:
+      - time: 0
+        pose: {b: 0.20, theta_0: 90, beta: 0}
+      - time: 150
+        pose: {b: 0.17, theta_0: 90, beta: 30}     # 向上跳
+      - time: 300
+        pose: {b: 0.22, theta_0: 90, beta: 0}
+      - time: 450
+        pose: {b: 0.17, theta_0: 90, beta: 30}     # 再跳
+      - time: 600
+        pose: {b: 0.22, theta_0: 90, beta: 0}
+      - time: 800
+        pose: {b: 0.20, theta_0: 90, beta: 5}
+
+  # 生气
+  angry:
+    name: "生气"
+    description: "生气的动作"
+    loop: false
+    duration: 600
+    keyframes:
+      - time: 0
+        pose: {b: 0.20, theta_0: 90, beta: 0}
+      - time: 150
+        pose: {b: 0.18, theta_0: 85, beta: -10}    # 低头左
+      - time: 300
+        pose: {b: 0.18, theta_0: 95, beta: -10}    # 低头右
+      - time: 450
+        pose: {b: 0.18, theta_0: 85, beta: -10}
+      - time: 600
+        pose: {b: 0.20, theta_0: 90, beta: 0}

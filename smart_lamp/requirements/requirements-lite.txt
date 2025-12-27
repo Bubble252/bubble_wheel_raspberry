@@ -1,0 +1,18 @@
+# 智能台灯 - 完整依赖 (生产环境)
+# 生成命令: pip freeze > requirements/requirements.txt
+
+# 基础
+numpy==1.23.5
+PyYAML==6.0.1
+pyserial==3.5
+
+# 视觉
+opencv-python-headless==4.8.0.74
+mediapipe==0.10.7
+
+# 语音
+pyaudio==0.2.14
+websocket-client==1.6.4
+
+# 工具
+loguru==0.7.2
